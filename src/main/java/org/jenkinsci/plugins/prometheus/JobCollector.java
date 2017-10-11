@@ -5,6 +5,7 @@ import static org.jenkinsci.plugins.prometheus.util.FlowNodes.getSortedStageNode
 import java.util.ArrayList;
 import java.util.List;
 
+import io.prometheus.client.Counter;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.prometheus.util.Callback;
 import org.jenkinsci.plugins.prometheus.util.FlowNodes;
@@ -26,6 +27,7 @@ public class JobCollector extends Collector {
 
     private String namespace;
     private Summary summary;
+    private Counter buildStatus;
     private Summary stageSummary;
 
     public JobCollector() {
@@ -48,6 +50,14 @@ public class JobCollector extends Collector {
         final String subsystem = "jenkins";
         String[] labelNameArray = {"job"};
         String[] labelStageNameArray = {"job", "stage"};
+
+        logger.debug("getting count of build result statues by Job");
+        buildStatus = Counter.build().
+                name(fullname + "_status").
+                subsystem(subsystem).namespace(namespace).
+                labelNames(new String[]{"job", "status"}).
+                help("Count of Jenkins build statuses by Job").
+                create();
 
         logger.debug("getting summary of build times in milliseconds by Job");
         summary = Summary.build().
@@ -80,13 +90,20 @@ public class JobCollector extends Collector {
                 appendJobMetrics(job);
             }
         });
-        if (summary.collect().get(0).samples.size() > 0){
-            logger.debug("Adding [{}] samples from summary", summary.collect().get(0).samples.size());
-            samples.addAll(summary.collect());
+        final List<MetricFamilySamples> buildStatusList = buildStatus.collect();
+        if (buildStatusList.get(0).samples.size() > 0){
+            logger.debug("Adding [{}] samples from build status", buildStatus.collect().get(0).samples.size());
+            samples.addAll(buildStatusList);
         }
-        if (stageSummary.collect().get(0).samples.size() > 0){
+        final List<MetricFamilySamples> summaryList = summary.collect();
+        if (summaryList.get(0).samples.size() > 0){
+            logger.debug("Adding [{}] samples from summary", summary.collect().get(0).samples.size());
+            samples.addAll(summaryList);
+        }
+        final List<MetricFamilySamples> stageSummaryList = stageSummary.collect();
+        if (stageSummaryList.get(0).samples.size() > 0){
             logger.debug("Adding [{}] samples from stage summary", stageSummary.collect().get(0).samples.size());
-            samples.addAll(stageSummary.collect());
+            samples.addAll(stageSummaryList);
         }
         return samples;
     }
@@ -96,6 +113,9 @@ public class JobCollector extends Collector {
         Run run = job.getLastBuild();
         while (run != null) {
             logger.debug("getting metrics for run [{}] from job [{}]", run.getNumber(), job.getName());
+            if (run.getResult() != null) {
+                buildStatus.labels(new String[]{job.getFullName(), run.getResult().toString()}).inc();
+            }
             if (Runs.includeBuildInMetrics(run)) {
                 logger.debug("getting build duration for run [{}] from job [{}]", run.getNumber(), job.getName());
                 long buildDuration = run.getDuration();
