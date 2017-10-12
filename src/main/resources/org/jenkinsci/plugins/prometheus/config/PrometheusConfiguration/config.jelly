@@ -7,6 +7,9 @@
     <f:entry title="${%Default Namespace}" field="defaultNamespace">
       <f:textbox/>
     </f:entry>
+    <f:entry title="${%Monitoring job names}" field="monitoringJobNames">
+      <f:textbox/>
+    </f:entry>
     <f:entry title="${%Enable authentication for prometheus end-point}" field="useAuthenticatedEndpoint">
       <f:checkbox/>
     </f:entry>

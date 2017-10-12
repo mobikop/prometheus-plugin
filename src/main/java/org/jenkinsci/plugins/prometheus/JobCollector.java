@@ -3,6 +3,7 @@ package org.jenkinsci.plugins.prometheus;
 import static org.jenkinsci.plugins.prometheus.util.FlowNodes.getSortedStageNodes;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import io.prometheus.client.Counter;
@@ -74,6 +75,8 @@ public class JobCollector extends Collector {
                 help("Summary of Jenkins build times by Job and Stage").
                 create();
 
+        final String[] jobNames = PrometheusConfiguration.get().getMonitoringJobNames().split(",");
+        if (jobNames.length == 0) return samples;
         Jobs.forEachJob(new Callback<Job>() {
             @Override
             public void invoke(Job job) {
@@ -85,9 +88,11 @@ public class JobCollector extends Collector {
                         return;
                     }
                 }
-                logger.debug("Job [{}] is not already added. Appending its metrics", job.getName());
                 jobs.add(job);
-                appendJobMetrics(job);
+                logger.debug("Job [{}] is checking on starts with [{}]", job.getName(), Arrays.toString(jobNames));
+                if (StringUtils.startsWithAny(job.getFullName(), jobNames)) {
+                    appendJobMetrics(job);
+                }
             }
         });
         final List<MetricFamilySamples> buildStatusList = buildStatus.collect();
@@ -100,56 +105,34 @@ public class JobCollector extends Collector {
             logger.debug("Adding [{}] samples from summary", summary.collect().get(0).samples.size());
             samples.addAll(summaryList);
         }
-        final List<MetricFamilySamples> stageSummaryList = stageSummary.collect();
-        if (stageSummaryList.get(0).samples.size() > 0){
-            logger.debug("Adding [{}] samples from stage summary", stageSummary.collect().get(0).samples.size());
-            samples.addAll(stageSummaryList);
-        }
         return samples;
     }
 
     protected void appendJobMetrics(Job job) {
         String[] labelValueArray = {job.getFullName()};
-        Run run = job.getLastBuild();
+        Run run = null;
+        try {
+            run = job.getLastBuild();
+        } catch (Exception e) {
+            logger.error("Failed to get last build to analyze");
+        }
         while (run != null) {
-            logger.debug("getting metrics for run [{}] from job [{}]", run.getNumber(), job.getName());
-            if (run.getResult() != null) {
-                buildStatus.labels(new String[]{job.getFullName(), run.getResult().toString()}).inc();
-            }
             if (Runs.includeBuildInMetrics(run)) {
                 logger.debug("getting build duration for run [{}] from job [{}]", run.getNumber(), job.getName());
                 long buildDuration = run.getDuration();
                 logger.debug("duration is [{}] for run [{}] from job [{}]", buildDuration, run.getNumber(), job.getName());
                 summary.labels(labelValueArray).observe(buildDuration);
-
-                if (run instanceof WorkflowRun) {
-                    logger.debug("run [{}] from job [{}] is of type workflowRun", run.getNumber(), job.getName());
-                    WorkflowRun workflowRun = (WorkflowRun) run;
-                    if (workflowRun.getExecution() == null) {
-                        run = run.getPreviousBuild();
-                        continue;
-                    }
-                    try {
-                        logger.debug("getting the sorted stage nodes for run[{}] from job [{}]", run.getNumber(), job.getName());
-                        List<FlowNode> stages = getSortedStageNodes(workflowRun.getExecution());
-                        for (FlowNode stage : stages) {
-                            observeStage(job, run, stage);
-                        }
-                    } catch (final NullPointerException e){}
-                }
             }
-            run = run.getPreviousBuild();
-        }
-    }
-    private void observeStage(Job job, Run run, FlowNode stage) {
-        logger.debug("Observing stage[{}] in run [{}] from job [{}]", stage.getDisplayName(), run.getNumber(), job.getName());
-        String jobName = job.getFullName();
-        String stageName = stage.getDisplayName();
-        String[] labelValueArray = {jobName, stageName};
 
-        logger.debug("getting duration for stage[{}] in run [{}] from job [{}]", stage.getDisplayName(), run.getNumber(), job.getName());
-        long duration = FlowNodes.getStageDuration(stage);
-        logger.debug("duration was [{}] for stage[{}] in run [{}] from job [{}]", duration, stage.getDisplayName(), run.getNumber(), job.getName());
-        stageSummary.labels(labelValueArray).observe(duration);
+            logger.debug("getting metrics for run [{}] from job [{}]", run.getNumber(), job.getName());
+            if (run.getResult() != null) {
+                buildStatus.labels(new String[]{job.getFullName(), run.getResult().toString()}).inc();
+            }
+            try {
+                run = run.getPreviousBuild();
+            } catch (Exception e) {
+                logger.error("Failed to get previous build to analyze");
+            }
+        }
     }
 }

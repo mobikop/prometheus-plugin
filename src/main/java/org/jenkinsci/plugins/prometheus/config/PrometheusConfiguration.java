@@ -26,6 +26,7 @@ public class PrometheusConfiguration extends GlobalConfiguration {
     private String urlName;
     private String additionalPath;
     private String defaultNamespace = "default";
+    private String monitoringJobNames = "precommit/";
     private boolean useAuthenticatedEndpoint;
     
     private boolean countSuccessfulBuilds = true;
@@ -53,6 +54,7 @@ public class PrometheusConfiguration extends GlobalConfiguration {
         setPath(json.getString("path"));
         useAuthenticatedEndpoint = json.getBoolean("useAuthenticatedEndpoint");
         defaultNamespace = json.getString("defaultNamespace");
+        monitoringJobNames = json.getString("monitoringJobNames");
 
         countSuccessfulBuilds = json.getBoolean("countSuccessfulBuilds");
         countUnstableBuilds = json.getBoolean("countUnstableBuilds");
@@ -80,6 +82,14 @@ public class PrometheusConfiguration extends GlobalConfiguration {
 
     public void setDefaultNamespace(String path) {
     	defaultNamespace = path;
+    }
+
+    public String getMonitoringJobNames() {
+        return monitoringJobNames;
+    }
+
+    public void setMonitoringJobNames(String monitoringJobNames) {
+        this.monitoringJobNames = monitoringJobNames;
     }
 
     public boolean isUseAuthenticatedEndpoint() {
