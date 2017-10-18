@@ -1,35 +1,28 @@
 package org.jenkinsci.plugins.prometheus;
 
-import static org.jenkinsci.plugins.prometheus.util.FlowNodes.getSortedStageNodes;
-
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import io.prometheus.client.Counter;
+import io.prometheus.client.Gauge;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.prometheus.util.Callback;
-import org.jenkinsci.plugins.prometheus.util.FlowNodes;
 import org.jenkinsci.plugins.prometheus.util.Jobs;
 import org.jenkinsci.plugins.prometheus.util.Runs;
-import org.jenkinsci.plugins.workflow.graph.FlowNode;
-import org.jenkinsci.plugins.workflow.job.WorkflowRun;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import hudson.model.Job;
 import hudson.model.Run;
 import io.prometheus.client.Collector;
-import io.prometheus.client.Summary;
 import org.jenkinsci.plugins.prometheus.config.PrometheusConfiguration;
 
 public class JobCollector extends Collector {
     private static final Logger logger = LoggerFactory.getLogger(JobCollector.class);
 
+    private long previousRun = 0;
     private String namespace;
-    private Summary summary;
-    private Counter buildStatus;
-    private Summary stageSummary;
+    private Gauge buildDuration;
 
     public JobCollector() {
     	// get the namespace from the environment first
@@ -49,30 +42,13 @@ public class JobCollector extends Collector {
         final List<Job> jobs = new ArrayList<>();
         final String fullname = "builds";
         final String subsystem = "jenkins";
-        String[] labelNameArray = {"job"};
-        String[] labelStageNameArray = {"job", "stage"};
 
-        logger.debug("getting count of build result statues by Job");
-        buildStatus = Counter.build().
-                name(fullname + "_status").
+        logger.debug("getting duration of each build");
+        buildDuration = Gauge.build().
+                name(fullname + "_duration").
                 subsystem(subsystem).namespace(namespace).
-                labelNames(new String[]{"job", "status"}).
-                help("Count of Jenkins build statuses by Job").
-                create();
-
-        logger.debug("getting summary of build times in milliseconds by Job");
-        summary = Summary.build().
-                name(fullname + "_duration_milliseconds_summary").
-                subsystem(subsystem).namespace(namespace).
-                labelNames(labelNameArray).
-                help("Summary of Jenkins build times in milliseconds by Job").
-                create();
-
-        logger.debug("getting summary of build times by Job and Stage");
-        stageSummary = Summary.build().name(fullname + "_stage_duration_milliseconds_summary").
-                subsystem(subsystem).namespace(namespace).
-                labelNames(labelStageNameArray).
-                help("Summary of Jenkins build times by Job and Stage").
+                labelNames(new String[]{"job", "status", "build"}).
+                help("Build duration by Job").
                 create();
 
         final String[] jobNames = PrometheusConfiguration.get().getMonitoringJobNames().split(",");
@@ -95,41 +71,39 @@ public class JobCollector extends Collector {
                 }
             }
         });
-        final List<MetricFamilySamples> buildStatusList = buildStatus.collect();
-        if (buildStatusList.get(0).samples.size() > 0){
-            logger.debug("Adding [{}] samples from build status", buildStatus.collect().get(0).samples.size());
-            samples.addAll(buildStatusList);
+        final List<MetricFamilySamples> buildDurationList = buildDuration.collect();
+        if (buildDurationList.get(0).samples.size() > 0){
+            logger.debug("Adding [{}] samples from build duration", buildDurationList.get(0).samples.size());
+            samples.addAll(buildDurationList);
         }
-        final List<MetricFamilySamples> summaryList = summary.collect();
-        if (summaryList.get(0).samples.size() > 0){
-            logger.debug("Adding [{}] samples from summary", summary.collect().get(0).samples.size());
-            samples.addAll(summaryList);
-        }
+        previousRun = System.currentTimeMillis();
         return samples;
     }
 
     protected void appendJobMetrics(Job job) {
-        String[] labelValueArray = {job.getFullName()};
         Run run = null;
         try {
             run = job.getLastBuild();
         } catch (Exception e) {
             logger.error("Failed to get last build to analyze");
         }
+        long runStartTime = run.getStartTimeInMillis();
         while (run != null) {
-            if (Runs.includeBuildInMetrics(run)) {
-                logger.debug("getting build duration for run [{}] from job [{}]", run.getNumber(), job.getName());
-                long buildDuration = run.getDuration();
-                logger.debug("duration is [{}] for run [{}] from job [{}]", buildDuration, run.getNumber(), job.getName());
-                summary.labels(labelValueArray).observe(buildDuration);
-            }
+            // stop collecting metrics from previous builds - they already should be in db
+            if (previousRun > runStartTime) break;
 
-            logger.debug("getting metrics for run [{}] from job [{}]", run.getNumber(), job.getName());
-            if (run.getResult() != null) {
-                buildStatus.labels(new String[]{job.getFullName(), run.getResult().toString()}).inc();
+            if (Runs.includeBuildInMetrics(run)) {
+                logger.debug("getting metrics for run [{}] from job [{}]", run.getNumber(), job.getName());
+                long duration = run.getDuration();
+                buildDuration.labels(new String[]{
+                            job.getFullName(),
+                            run.getResult().toString(),
+                            String.valueOf(run.getNumber())
+                }).set(duration);
             }
             try {
                 run = run.getPreviousBuild();
+                runStartTime = run.getStartTimeInMillis();
             } catch (Exception e) {
                 logger.error("Failed to get previous build to analyze");
             }
